@@ -192,13 +192,15 @@ def _detect_curves(binary: np.ndarray) -> list[dict]:
         simplified = cv2.approxPolyDP(contour, 2.0, False).reshape(-1, 2).astype(int)
         fit = fit_circle(simplified)
         output.append({
+            "id": f"C{len(output) + 1:04d}",
             "points": simplified.tolist(),
             "bbox": [int(x), int(y), int(width), int(height)],
             "length_px": round(perimeter, 2),
             "geometry": fit["geometry"],
             "fit": fit["fit"],
-            "category": "arc_candidate" if fit["geometry"] == "arc_candidate" else "free_curve_candidate",
-            "status": "needs_review",
+            "geometry_candidate": "arc_candidate" if fit["geometry"] == "arc_candidate" else "free_curve_candidate",
+            "category": "unmarked",
+            "status": "unmarked",
         })
     output.sort(key=lambda item: item["length_px"], reverse=True)
     return output[:50]

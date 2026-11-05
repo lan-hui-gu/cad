@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from lightningcad.recognition import analyze_image, create_overlay
+from lightningcad.simplify import apply_simplification
 
 
 def test_synthetic_sketch_recognition(tmp_path):
@@ -13,8 +14,11 @@ def test_synthetic_sketch_recognition(tmp_path):
     cv2.imwrite(str(path), image)
 
     result, prepared = analyze_image(path, use_ocr=False)
-    assert len(result["lines"]) > 0
-    assert len(result["contours"]) > 0
+    assert len(result["raw_lines"]) > 0
+    assert result["lines"] == []
     assert result["image_width"] == 800
+
+    apply_simplification(result)
+    assert len(result["lines"]) > 0
     overlay = create_overlay(prepared, result)
     assert overlay.shape == image.shape

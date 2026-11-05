@@ -7,134 +7,91 @@ import numpy as np
 from .geometry import snap_near_orthogonal
 
 
-def _unit_direction(start, end) -> np.ndarray:
-    vector = np.asarray(end, dtype=float) - np.asarray(start, dtype=float)
-    length = float(np.linalg.norm(vector))
-    if length < 1e-9:
-        return np.zeros(2, dtype=float)
-    vector /= length
-    if vector[0] < 0 or (abs(vector[0]) < 1e-9 and vector[1] < 0):
-        vector = -vector
-    return vector
-
-
 def _segment_data(segment: dict) -> dict | None:
-    start = np.asarray(segment.get("start"), dtype=float)
-    end = np.asarray(segment.get("end"), dtype=float)
+    try:
+        start = np.asarray(segment.get("start"), dtype=float)
+        end = np.asarray(segment.get("end"), dtype=float)
+    except (TypeError, ValueError):
+        return None
     if start.shape != (2,) or end.shape != (2,):
         return None
-    direction = _unit_direction(start, end)
-    if np.linalg.norm(direction) < 1e-9:
+    vector = end - start
+    length = float(np.linalg.norm(vector))
+    if length < 1e-6:
         return None
+    direction = vector / length
+    if direction[0] < 0 or (abs(direction[0]) < 1e-9 and direction[1] < 0):
+        direction = -direction
     normal = np.array([-direction[1], direction[0]])
     midpoint = (start + end) / 2.0
-    projections = sorted((float(np.dot(start, direction)), float(np.dot(end, direction))))
+    angle = math.degrees(math.atan2(direction[1], direction[0])) % 180.0
     return {
-        "source": segment,
-        "start": start,
-        "end": end,
-        "direction": direction,
-        "normal": normal,
+        "source": segment, "start": start, "end": end,
+        "direction": direction, "normal": normal,
         "offset": float(np.dot(midpoint, normal)),
-        "low": projections[0],
-        "high": projections[1],
-        "length": float(np.linalg.norm(end - start)),
+        "length": length, "angle": angle,
     }
 
 
-def _compatible(a: dict, b: dict, angle_tolerance_deg: float, offset_tolerance_px: float, gap_tolerance_px: float) -> bool:
-    dot = float(np.clip(abs(np.dot(a["direction"], b["direction"])), -1.0, 1.0))
-    angle = math.degrees(math.acos(dot))
-    if angle > angle_tolerance_deg:
-        return False
-
-    direction = a["direction"] + b["direction"]
+def _group_geometry(group: list[dict]):
+    weights = np.asarray([max(item["length"], 1.0) for item in group], dtype=float)
+    directions = np.asarray([item["direction"] for item in group], dtype=float)
+    direction = np.average(directions, axis=0, weights=weights)
     norm = float(np.linalg.norm(direction))
-    if norm < 1e-9:
-        return False
-    direction /= norm
+    direction = group[0]["direction"].copy() if norm < 1e-9 else direction / norm
+    if direction[0] < 0 or (abs(direction[0]) < 1e-9 and direction[1] < 0):
+        direction = -direction
     normal = np.array([-direction[1], direction[0]])
-    mid_a = (a["start"] + a["end"]) / 2.0
-    mid_b = (b["start"] + b["end"]) / 2.0
-    if abs(float(np.dot(mid_a - mid_b, normal))) > offset_tolerance_px:
-        return False
-
-    endpoints_a = [float(np.dot(a["start"], direction)), float(np.dot(a["end"], direction))]
-    endpoints_b = [float(np.dot(b["start"], direction)), float(np.dot(b["end"], direction))]
-    low_a, high_a = min(endpoints_a), max(endpoints_a)
-    low_b, high_b = min(endpoints_b), max(endpoints_b)
-    gap = max(0.0, max(low_a, low_b) - min(high_a, high_b))
-    return gap <= gap_tolerance_px
+    offsets = [float(np.dot((item["start"] + item["end"]) / 2.0, normal)) for item in group]
+    offset = float(np.median(offsets))
+    angle = math.degrees(math.atan2(direction[1], direction[0])) % 180.0
+    return direction, normal, offset, angle
 
 
-def simplify_segments(
-    segments: list[dict],
-    *,
-    angle_tolerance_deg: float = 4.0,
-    offset_tolerance_px: float = 7.0,
-    gap_tolerance_px: float = 26.0,
-    min_length_px: float = 18.0,
-    orthogonal_tolerance_deg: float = 5.0,
-) -> list[dict]:
-    """Merge duplicate/collinear Hough fragments into clean reviewable segments.
+def _interval_gap(first, second, direction):
+    a = sorted((float(np.dot(first["start"], direction)), float(np.dot(first["end"], direction))))
+    b = sorted((float(np.dot(second["start"], direction)), float(np.dot(second["end"], direction))))
+    return max(0.0, max(a[0], b[0]) - min(a[1], b[1]))
 
-    This stage intentionally does not assign engineering meaning. All output
-    segments remain unmarked until a user labels them in the annotation UI.
-    """
-    data = [item for item in (_segment_data(s) for s in segments) if item is not None]
-    if not data:
-        return []
 
-    parent = list(range(len(data)))
+def _can_join_group(group, item, angle_tolerance_deg, offset_tolerance_px, gap_tolerance_px):
+    direction, normal, offset, angle = _group_geometry(group)
+    angle_diff = abs(item["angle"] - angle)
+    angle_diff = min(angle_diff, 180.0 - angle_diff)
+    if angle_diff > angle_tolerance_deg:
+        return False, float("inf")
+    item_offset = float(np.dot((item["start"] + item["end"]) / 2.0, normal))
+    offset_error = abs(item_offset - offset)
+    if offset_error > offset_tolerance_px:
+        return False, float("inf")
+    gap = min(_interval_gap(existing, item, direction) for existing in group)
+    if gap > gap_tolerance_px:
+        return False, float("inf")
+    return True, angle_diff + offset_error * 0.1 + gap * 0.01
 
-    def find(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
 
-    def union(first: int, second: int) -> None:
-        root_a, root_b = find(first), find(second)
-        if root_a != root_b:
-            parent[root_b] = root_a
+def _merge_group_intervals(group, gap_tolerance_px, min_length_px, orthogonal_tolerance_deg):
+    direction, normal, offset, _ = _group_geometry(group)
+    intervals = []
+    for item in group:
+        p1 = float(np.dot(item["start"], direction))
+        p2 = float(np.dot(item["end"], direction))
+        intervals.append((min(p1, p2), max(p1, p2), item))
+    intervals.sort(key=lambda item: item[0])
 
-    for i, first in enumerate(data):
-        for j in range(i + 1, len(data)):
-            if _compatible(
-                first, data[j],
-                angle_tolerance_deg=angle_tolerance_deg,
-                offset_tolerance_px=offset_tolerance_px,
-                gap_tolerance_px=gap_tolerance_px,
-            ):
-                union(i, j)
+    interval_groups = []
+    for interval in intervals:
+        if not interval_groups or interval[0] - max(x[1] for x in interval_groups[-1]) > gap_tolerance_px:
+            interval_groups.append([interval])
+        else:
+            interval_groups[-1].append(interval)
 
-    groups: dict[int, list[dict]] = {}
-    for index, item in enumerate(data):
-        groups.setdefault(find(index), []).append(item)
-
-    merged = []
-    for group in groups.values():
-        weights = np.asarray([max(item["length"], 1.0) for item in group], dtype=float)
-        directions = np.asarray([item["direction"] for item in group], dtype=float)
-        direction = np.average(directions, axis=0, weights=weights)
-        direction_norm = float(np.linalg.norm(direction))
-        if direction_norm < 1e-9:
-            continue
-        direction /= direction_norm
-        if direction[0] < 0 or (abs(direction[0]) < 1e-9 and direction[1] < 0):
-            direction = -direction
-        normal = np.array([-direction[1], direction[0]])
-
-        all_points = np.asarray(
-            [point for item in group for point in (item["start"], item["end"])],
-            dtype=float,
-        )
-        offsets = np.asarray([float(np.dot((item["start"] + item["end"]) / 2, normal)) for item in group])
-        offset = float(np.average(offsets, weights=weights))
-        projections = all_points @ direction
-        start = direction * float(np.min(projections)) + normal * offset
-        end = direction * float(np.max(projections)) + normal * offset
-
+    output = []
+    for interval_group in interval_groups:
+        low = min(item[0] for item in interval_group)
+        high = max(item[1] for item in interval_group)
+        start = direction * low + normal * offset
+        end = direction * high + normal * offset
         snapped_start, snapped_end, constraint = snap_near_orthogonal(
             start, end, tolerance_deg=orthogonal_tolerance_deg
         )
@@ -144,34 +101,189 @@ def simplify_segments(
         if length < min_length_px:
             continue
         angle = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0])) % 180.0
-        merged.append({
+        output.append({
             "id": "",
             "start": start.round(2).tolist(),
             "end": end.round(2).tolist(),
             "length_px": round(length, 2),
             "angle_deg": round(angle, 2),
-            "orientation": "horizontal" if min(angle, 180 - angle) <= 5 else ("vertical" if abs(angle - 90) <= 5 else "oblique"),
+            "orientation": (
+                "horizontal" if min(angle, 180.0 - angle) <= 2.5
+                else "vertical" if abs(angle - 90.0) <= 2.5
+                else "oblique"
+            ),
             "geometry_constraint": constraint,
-            "source_ids": [item["source"].get("id", "") for item in group],
-            "merged_count": len(group),
+            "source_ids": [item[2]["source"].get("id", "") for item in interval_group],
+            "merged_count": len(interval_group),
+            "intersection_count": 0,
             "category": "unmarked",
             "status": "unmarked",
         })
+    return output
 
-    merged.sort(key=lambda item: item["length_px"], reverse=True)
-    for index, segment in enumerate(merged, start=1):
-        segment["id"] = f"S{index:04d}"
-    return merged
+
+def _intersection_parameters(first, second):
+    p = np.asarray(first["start"], dtype=float)
+    r = np.asarray(first["end"], dtype=float) - p
+    q = np.asarray(second["start"], dtype=float)
+    s = np.asarray(second["end"], dtype=float) - q
+    denominator = r[0] * s[1] - r[1] * s[0]
+    if abs(float(denominator)) < 1e-8:
+        return None
+    delta = q - p
+    t = (delta[0] * s[1] - delta[1] * s[0]) / denominator
+    u = (delta[0] * r[1] - delta[1] * r[0]) / denominator
+    if -1e-6 <= t <= 1.000001 and -1e-6 <= u <= 1.000001:
+        return float(t), float(u), p + t * r
+    return None
+
+
+def _split_at_intersections(segments: list[dict], min_piece_px: float = 4.0):
+    breakpoints = [
+        [(0.0, np.asarray(item["start"], dtype=float)), (1.0, np.asarray(item["end"], dtype=float))]
+        for item in segments
+    ]
+    intersections = []
+    for i, first in enumerate(segments):
+        for j in range(i + 1, len(segments)):
+            second = segments[j]
+            hit = _intersection_parameters(first, second)
+            if hit is None:
+                continue
+            t, u, point = hit
+            len_a, len_b = float(first["length_px"]), float(second["length_px"])
+            interior_a = min(t * len_a, (1 - t) * len_a) >= 1.5
+            interior_b = min(u * len_b, (1 - u) * len_b) >= 1.5
+            if not interior_a and not interior_b:
+                continue
+            if interior_a:
+                breakpoints[i].append((t, point))
+            if interior_b:
+                breakpoints[j].append((u, point))
+            intersections.append({
+                "point": point.round(2).tolist(),
+                "line_ids": [first["id"], second["id"]],
+                "status": "topology_node",
+            })
+
+    output = []
+    for index, item in enumerate(segments):
+        ordered = sorted(breakpoints[index], key=lambda pair: pair[0])
+        unique = []
+        for t, point in ordered:
+            if not unique or float(np.linalg.norm(point - unique[-1][1])) > 0.75:
+                unique.append((t, point))
+        count = sum(1 for hit in intersections if item["id"] in hit["line_ids"])
+        for part_index, ((_, start), (_, end)) in enumerate(zip(unique, unique[1:]), start=1):
+            length = float(np.linalg.norm(end - start))
+            if length < min_piece_px:
+                continue
+            angle = math.degrees(math.atan2(end[1] - start[1], end[0] - start[0])) % 180.0
+            output.append({
+                **item,
+                "id": "",
+                "start": start.round(2).tolist(),
+                "end": end.round(2).tolist(),
+                "length_px": round(length, 2),
+                "angle_deg": round(angle, 2),
+                "orientation": (
+                    "horizontal" if min(angle, 180.0 - angle) <= 2.5
+                    else "vertical" if abs(angle - 90.0) <= 2.5
+                    else "oblique"
+                ),
+                "intersection_count": count,
+                "split_part": part_index,
+            })
+    for index, item in enumerate(output, start=1):
+        item["id"] = f"S{index:04d}"
+    return output, intersections
+
+
+def _build_topology(segments: list[dict], tolerance_px: float = 1.5) -> dict:
+    nodes = []
+
+    def node_for(point):
+        p = np.asarray(point, dtype=float)
+        for node in nodes:
+            if float(np.linalg.norm(p - np.asarray(node["position"], dtype=float))) <= tolerance_px:
+                return node
+        node = {"id": f"N{len(nodes) + 1:04d}", "position": p.round(2).tolist(), "edges": []}
+        nodes.append(node)
+        return node
+
+    edges = []
+    for item in segments:
+        a, b = node_for(item["start"]), node_for(item["end"])
+        a["edges"].append(item["id"])
+        b["edges"].append(item["id"])
+        item["start_node"], item["end_node"] = a["id"], b["id"]
+        edges.append({"id": item["id"], "start_node": a["id"], "end_node": b["id"]})
+    return {"nodes": nodes, "edges": edges}
+
+
+def simplify_segments(
+    segments: list[dict],
+    *,
+    angle_tolerance_deg: float = 2.0,
+    offset_tolerance_px: float = 3.2,
+    gap_tolerance_px: float = 9.0,
+    min_length_px: float = 12.0,
+    orthogonal_tolerance_deg: float = 3.0,
+    split_intersections: bool = True,
+) -> list[dict]:
+    """Conservatively merge collinear fragments and preserve intersections/topology."""
+    data = [item for item in (_segment_data(segment) for segment in segments) if item is not None]
+    if not data:
+        return []
+    data.sort(key=lambda item: (item["angle"], item["offset"], -item["length"]))
+    groups: list[list[dict]] = []
+    for item in data:
+        candidates = []
+        for group in groups:
+            okay, score = _can_join_group(
+                group, item, angle_tolerance_deg, offset_tolerance_px, gap_tolerance_px
+            )
+            if okay:
+                candidates.append((score, group))
+        if candidates:
+            min(candidates, key=lambda pair: pair[0])[1].append(item)
+        else:
+            groups.append([item])
+
+    merged = []
+    for group in groups:
+        merged.extend(_merge_group_intervals(
+            group, gap_tolerance_px, min_length_px, orthogonal_tolerance_deg
+        ))
+    merged.sort(key=lambda item: (item["orientation"], item["start"][1], item["start"][0], -item["length_px"]))
+    for index, item in enumerate(merged, start=1):
+        item["id"] = f"M{index:04d}"
+
+    output = _split_at_intersections(merged)[0] if split_intersections else merged
+    output.sort(key=lambda item: (item["start"][1], item["start"][0], item["end"][1], item["end"][0]))
+    for index, item in enumerate(output, start=1):
+        item["id"] = f"S{index:04d}"
+    _build_topology(output)
+    return output
 
 
 def apply_simplification(result: dict) -> dict:
     raw = result.get("raw_lines") or result.get("lines") or []
-    result["lines"] = simplify_segments(raw)
+    lines = simplify_segments(raw)
+    result["lines"] = lines
     result["point_marks"] = result.get("point_marks", [])
     result["marking_complete"] = False
+    topology = _build_topology(lines)
+    result["topology"] = topology
+    result["intersections"] = [
+        {"point": node["position"], "line_ids": node["edges"], "status": "topology_node"}
+        for node in topology["nodes"] if len(node["edges"]) >= 3
+    ]
     result["simplification"] = {
         "raw_segment_count": len(raw),
-        "simplified_segment_count": len(result["lines"]),
-        "rule": "共线合并、重复消减、短间断合并、近水平/垂直正交约束",
+        "merged_segment_count": len({source for line in lines for source in line.get("source_ids", [])}),
+        "simplified_segment_count": len(lines),
+        "intersection_count": len(result["intersections"]),
+        "rule": "严格共线合并、短间断合并、交点拆分、近正交约束、拓扑节点重建",
     }
     return result

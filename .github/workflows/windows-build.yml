@@ -1,4 +1,4 @@
-name: Windows build
+name: Windows single-file EXE
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         run: python -m pytest -q
 
   build:
-    name: Package Windows application
+    name: Build standalone Windows EXE
     runs-on: windows-latest
     needs: test
     steps:
@@ -51,18 +51,21 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install .
           python -m pip install "pyinstaller>=6.10,<7"
-      - name: Build onedir application
+      - name: Build one-file executable
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --windowed --onedir --name LightningCAD-AI --collect-all rapidocr --collect-all onnxruntime --collect-all cv2 --collect-all shapely --collect-all pyclipper --collect-all omegaconf --add-data "config;config" run.py
-      - name: Create distributable ZIP
+          pyinstaller --noconfirm --clean --windowed --onefile --name LightningCAD-AI --collect-all rapidocr --collect-all onnxruntime --collect-all cv2 --collect-all shapely --collect-all pyclipper --collect-all omegaconf --add-data "config;config" run.py
+      - name: Verify executable output
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/LightningCAD-AI" -DestinationPath "LightningCAD-AI-Windows-x64.zip" -Force
-      - name: Upload Windows build
+          if (!(Test-Path "dist/LightningCAD-AI.exe")) { throw "LightningCAD-AI.exe was not generated." }
+          $exe = Get-Item "dist/LightningCAD-AI.exe"
+          if ($exe.Length -lt 10000000) { throw "Executable unexpectedly small: $($exe.Length) bytes" }
+          Write-Host "Standalone EXE generated: $($exe.Length) bytes"
+      - name: Upload single EXE
         uses: actions/upload-artifact@v4
         with:
-          name: LightningCAD-AI-Windows-x64
-          path: LightningCAD-AI-Windows-x64.zip
+          name: LightningCAD-AI-EXE-Windows-x64
+          path: dist/LightningCAD-AI.exe
           if-no-files-found: error
           retention-days: 30

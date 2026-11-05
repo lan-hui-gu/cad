@@ -9,7 +9,7 @@
 - 针对 main 创建或更新 Pull Request
 - 在 Actions 页面手动运行 workflow_dispatch
 
-工作流先在 Windows runner 上运行 pytest。测试成功后，使用 PyInstaller 的 `--onefile` 模式将程序、OCR 模型、OpenCV 和 ONNX Runtime 依赖打包为一个 Windows x64 EXE。
+工作流先在 Windows runner 上运行 pytest。测试成功后，使用 PyInstaller 的 `--onefile` 模式将程序、OCR 模型、OpenCV 和 ONNX Runtime 依赖打包为一个 Windows x64 EXE。OpenCADStudio v2026.44 是独立安装的 CAD 引擎，不打包进 LightningCAD EXE。
 
 ## 下载与运行
 
@@ -17,7 +17,7 @@
 2. 选择最新一次成功的 Windows build。
 3. 下载名为 `LightningCAD-AI-EXE-Windows-x64` 的构建产物。
 4. 解压 Artifact ZIP，文件夹中只有 `LightningCAD-AI.exe`。
-5. 双击 `LightningCAD-AI.exe` 运行。无需安装 Python，也无需另外复制依赖文件夹。
+5. 双击 `LightningCAD-AI.exe` 运行。无需安装 Python，也无需另外复制依赖文件夹；首次使用 CAD 绘图前需安装 OpenCADStudio v2026.44，并在软件设置栏指定其 EXE 路径（如未自动识别）。
 
 注意：GitHub Actions 的 Artifact 下载机制会将上传文件包装为 ZIP；ZIP 内部只包含最终 EXE，不是 onedir 程序目录。单文件程序启动时会先将依赖释放到 Windows 临时目录，因此首次启动可能稍慢。
 

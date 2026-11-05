@@ -11,7 +11,7 @@ from PIL import Image, ImageTk
 
 from .categories import CURVE_CATEGORIES, LINE_CATEGORIES, POINT_CATEGORIES
 from .drawing_model import build_drawing_model
-from .dxf_export import export_dxf
+from .opencad import export_with_opencad, find_opencad_executable
 from .recognition import analyze_image
 from .simplify import apply_simplification
 
@@ -31,7 +31,7 @@ LINE_COLORS = {
 class LightningCADApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LightningCAD-AI · 识别 → 简化 → 标记 → Python 重绘")
+        self.title("LightningCAD-AI · 识别 → 拓扑简化 → 标记 → OpenCADStudio 原生绘图")
         self.geometry("1560x960")
         self.minsize(1120, 720)
         self.source_path: Path | None = None
@@ -47,6 +47,8 @@ class LightningCADApp(tk.Tk):
         self.view_scale = 1.0
         self.view_offset_x = 0.0
         self.view_offset_y = 0.0
+        self.opencad_exe = tk.StringVar(value=find_opencad_executable() or "")
+        self.open_after_export = tk.BooleanVar(value=True)
         self._build_ui()
 
     def _build_ui(self):
@@ -63,11 +65,11 @@ class LightningCADApp(tk.Tk):
         ttk.Button(toolbar, text="1.识别原始线条", command=self.recognize).pack(side="left", padx=3)
         ttk.Button(toolbar, text="2.简化线条", command=self.simplify).pack(side="left", padx=3)
         ttk.Button(toolbar, text="3.完成标记", command=self.finish_marking).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="4.Python 生成 DXF", command=self.save_dxf).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="4.OpenCADStudio 原生绘图", command=self.save_to_opencad).pack(side="left", padx=3)
         ttk.Button(toolbar, text="导出项目 JSON", command=self.save_json).pack(side="left", padx=3)
         ttk.Button(toolbar, text="保存当前预览", command=self.save_overlay).pack(side="left", padx=3)
 
-        settings = ttk.LabelFrame(self, text="照片与比例设置", padding=7)
+        settings = ttk.LabelFrame(self, text="照片、比例与 CAD 引擎设置", padding=7)
         settings.pack(fill="x", padx=10, pady=(0, 7))
         ttk.Label(settings, text="照片旋转").pack(side="left")
         self.rotation = tk.StringVar(value="0")
@@ -77,7 +79,11 @@ class LightningCADApp(tk.Tk):
         ttk.Label(settings, text="比例标定（原始照片 mm/px，未知可留空）").pack(side="left", padx=(18, 4))
         self.scale_value = tk.StringVar(value="")
         ttk.Entry(settings, textvariable=self.scale_value, width=12).pack(side="left")
-        ttk.Label(settings, text="未标定时 DXF 不代表实际尺寸").pack(side="left", padx=12)
+        ttk.Label(settings, text="未标定时按像素单位绘图").pack(side="left", padx=8)
+        ttk.Label(settings, text="OpenCADStudio v2026.44").pack(side="left", padx=(12, 3))
+        ttk.Entry(settings, textvariable=self.opencad_exe, width=32).pack(side="left", padx=3)
+        ttk.Button(settings, text="选择 EXE", command=self.choose_opencad).pack(side="left", padx=3)
+        ttk.Checkbutton(settings, text="完成后打开 CAD 图纸", variable=self.open_after_export).pack(side="left", padx=5)
 
         main = ttk.Panedwindow(self, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=(0, 8))
@@ -112,7 +118,8 @@ class LightningCADApp(tk.Tk):
         ttk.Combobox(controls, textvariable=self.point_category_label, values=list(POINT_CATEGORIES.keys()), state="readonly", width=15).grid(row=2, column=1, sticky="ew", padx=4, pady=2)
         self.point_button = ttk.Button(controls, text="在图上添加点位", command=self.toggle_point_mode)
         self.point_button.grid(row=2, column=2, padx=3)
-        ttk.Button(controls, text="删除选中点位", command=self.delete_selected_point).grid(row=2, column=3, padx=3)
+        ttk.Button(controls, text="标记选中点位", command=self.apply_point_mark).grid(row=2, column=3, padx=3)
+        ttk.Button(controls, text="删除选中点位", command=self.delete_selected_point).grid(row=3, column=3, padx=3)
         controls.columnconfigure(1, weight=1)
 
         ttk.Label(right, text="简化结果与人工确认").pack(anchor="w")
@@ -120,7 +127,7 @@ class LightningCADApp(tk.Tk):
         self.tabs.pack(fill="both", expand=True)
         self.line_tree = self._tree("简化直线", ("id", "category", "length", "merged", "status"), ("编号", "类别", "长度(px)", "合并段", "状态"))
         self.curve_tree = self._tree("弧线候选", ("id", "geometry", "length", "status"), ("编号", "识别类型", "长度(px)", "状态"))
-        self.point_tree = self._tree("点位符号", ("id", "category", "label", "position"), ("编号", "类别", "文字", "坐标(px)"))
+        self.point_tree = self._tree("点位符号", ("id", "category", "label", "position", "status"), ("编号", "类别", "文字", "坐标(px)", "状态"))
         self.text_tree = self._tree("OCR 文字", ("text", "confidence", "status"), ("识别文字", "置信度", "状态"))
         self.line_tree.bind("<<TreeviewSelect>>", self.on_line_select)
         self.curve_tree.bind("<<TreeviewSelect>>", self.on_curve_select)
@@ -128,7 +135,7 @@ class LightningCADApp(tk.Tk):
         self.point_tree.bind("<Double-1>", self.edit_point_label)
         self.text_tree.bind("<Double-1>", self.edit_ocr_text)
 
-        self.status = tk.StringVar(value="请导入俯视拍摄的防雷检测手绘草图。工作流程：识别 → 简化 → 标记 → Python 生成 DXF。")
+        self.status = tk.StringVar(value="请导入俯视拍摄的防雷检测手绘草图。工作流程：识别 → 拓扑简化 → 标记 → OpenCADStudio 原生绘图。")
         ttk.Label(self, textvariable=self.status, relief="sunken", anchor="w", padding=6).pack(fill="x")
 
     def _tree(self, title, columns, headings):
@@ -181,7 +188,17 @@ class LightningCADApp(tk.Tk):
             self.stage = "recognized"
             self.selected_line_id = self.selected_curve_id = self.selected_point_id = None
             self.result["lines"] = []
-            self.result["point_marks"] = []
+            self.result["point_marks"] = [
+                {
+                    "id": f"P{index:04d}",
+                    "position": [round(float(marker["center"][0]), 2), round(float(marker["center"][1]), 2)],
+                    "category": "test_point",
+                    "label": marker.get("label", ""),
+                    "status": "needs_review",
+                    "source": "colored_triangle",
+                }
+                for index, marker in enumerate(self.result.get("colored_markers", []), start=1)
+            ]
             self.result["marking_complete"] = False
             self._refresh_tables()
             self._compose_overlay()
@@ -238,7 +255,8 @@ class LightningCADApp(tk.Tk):
         for point in self.result.get("point_marks", []):
             label = next((name for name, key in POINT_CATEGORIES.items() if key == point["category"]), "待标记")
             position = point["position"]
-            self.point_tree.insert("", "end", iid=point["id"], values=(point["id"], label, point.get("label", ""), f"{position[0]:.1f}, {position[1]:.1f}"))
+            status = "已确认" if point.get("status") == "marked" else "待确认"
+            self.point_tree.insert("", "end", iid=point["id"], values=(point["id"], label, point.get("label", ""), f"{position[0]:.1f}, {position[1]:.1f}", status))
 
         for index, item in enumerate(self.result.get("texts", [])):
             confidence = item.get("confidence")
@@ -265,6 +283,21 @@ class LightningCADApp(tk.Tk):
         self.selected_point_id = selected[0] if selected else None
         self._compose_overlay()
         self._render()
+
+    def apply_point_mark(self):
+        if not self.result or not self.selected_point_id:
+            messagebox.showinfo("提示", "请先选择一个待确认的点位符号。")
+            return
+        point = next((item for item in self.result.get("point_marks", []) if item["id"] == self.selected_point_id), None)
+        if point is None:
+            return
+        point["category"] = POINT_CATEGORIES[self.point_category_label.get()]
+        point["status"] = "marked"
+        self._invalidate_marking()
+        self._refresh_tables()
+        self._compose_overlay()
+        self._render()
+        self.status.set(f"点位 {point.get('id')} 已确认为“{self.point_category_label.get()}”。")
 
     def on_canvas_click(self, event):
         if not self.result or self.stage not in ("simplified", "marked"):
@@ -426,6 +459,7 @@ class LightningCADApp(tk.Tk):
         label = simpledialog.askstring("修改点位文字", "输入编号/文字：", initialvalue=point.get("label", ""), parent=self)
         if label is not None:
             point["label"] = label.strip()
+            point["status"] = "marked"
             self._invalidate_marking()
             self._refresh_tables()
             self._compose_overlay()
@@ -461,7 +495,7 @@ class LightningCADApp(tk.Tk):
         marked_lines = [item for item in self.result.get("lines", []) if item.get("category") in valid_lines]
         marked_curves = [item for item in self.result.get("curves", []) if item.get("category") == "arc"]
         valid_points = set(POINT_CATEGORIES.values()) - {"ignore"}
-        marked_points = [item for item in self.result.get("point_marks", []) if item.get("category") in valid_points]
+        marked_points = [item for item in self.result.get("point_marks", []) if item.get("category") in valid_points and item.get("status") == "marked"]
         approved_texts = [item for item in self.result.get("texts", []) if item.get("approved", False)]
         if not marked_lines and not marked_curves and not marked_points and not approved_texts:
             messagebox.showwarning("没有可绘制图元", "请至少标记一条线路/弧线、添加一个点位，或确认一项文字。")
@@ -472,9 +506,9 @@ class LightningCADApp(tk.Tk):
             "标记完成",
             f"已确认直线：{len(marked_lines)} 条；弧线：{len(marked_curves)} 条；"
             f"点位：{len(marked_points)} 个；文字：{len(approved_texts)} 项。\n"
-            "下一步将仅按这些人工确认的图元生成 DXF。",
+            "下一步将仅按这些人工确认的图元交由 OpenCADStudio 原生绘制 DWG/DXF。",
         )
-        self.status.set("标记已确认。现在可以使用 Python 生成 DXF 工程图。")
+        self.status.set("标记已确认。现在可以使用 OpenCADStudio v2026.44 原生生成 DWG/DXF 工程图。")
 
     def _compose_overlay(self):
         if self.prepared is None:
@@ -568,32 +602,59 @@ class LightningCADApp(tk.Tk):
             raise ValueError("比例标定值必须大于 0")
         return value
 
-    def save_dxf(self):
+    def choose_opencad(self):
+        filename = filedialog.askopenfilename(
+            title="选择 OpenCADStudio v2026.44 程序",
+            filetypes=[("OpenCADStudio", "OpenCADStudio.exe"), ("Windows 程序", "*.exe")],
+        )
+        if filename:
+            self.opencad_exe.set(filename)
+
+    def save_to_opencad(self):
         if not self.result:
             messagebox.showinfo("提示", "请先完成识别、简化和标记。")
             return
         if not self.result.get("marking_complete"):
             messagebox.showwarning("尚未完成标记", "必须先点击“3.完成标记”，软件才会按已确认图元生成工程图。")
             return
+        executable = find_opencad_executable(self.opencad_exe.get().strip() or None)
+        if not executable:
+            messagebox.showerror(
+                "未找到 OpenCADStudio",
+                "本程序不再内置其他 CAD 绘图引擎。\n请安装 OpenCADStudio v2026.44，并在设置栏选择 OpenCADStudio.exe。",
+            )
+            return
+        self.opencad_exe.set(executable)
         filename = filedialog.asksaveasfilename(
-            title="生成防雷检测点位布置图",
-            defaultextension=".dxf",
-            filetypes=[("DXF 工程图", "*.dxf")],
+            title="由 OpenCADStudio 原生生成防雷检测工程图",
+            defaultextension=".dwg",
+            initialfile=f"{self.source_path.stem if self.source_path else 'LightningCAD'}_CAD.dwg",
+            filetypes=[("OpenCADStudio DWG", "*.dwg"), ("DXF 文件", "*.dxf")],
         )
         if not filename:
             return
+        overwrite = Path(filename).exists()
+        if overwrite and not messagebox.askyesno("确认覆盖", f"文件已存在，是否覆盖？\n{filename}"):
+            return
         try:
             drawing_model = build_drawing_model(self.result)
-            export_dxf(drawing_model, filename, self._scale())
-            messagebox.showinfo(
-                "工程图生成完成",
-                f"DXF 已保存：\n{filename}\n\n"
-                f"已绘制直线 {len(drawing_model['lines'])} 条、弧线 {len(drawing_model['curves'])} 条、"
-                f"点位 {len(drawing_model['points'])} 个、文字 {len(drawing_model['texts'])} 项。\n"
-                "图纸由 Python 按人工确认的语义图元重新绘制，不是直接描摹照片。",
+            self.status.set("正在启动 OpenCADStudio v2026.44 原生绘图引擎……")
+            self.update_idletasks()
+            outcome = export_with_opencad(
+                drawing_model, filename, executable, self._scale(),
+                overwrite=overwrite, open_after=self.open_after_export.get(),
             )
+            messagebox.showinfo(
+                "OpenCADStudio 绘图完成",
+                f"已通过 OpenCADStudio {outcome['version']} 原生创建并校验文件：\n"
+                f"{outcome['path']}\n\nCAD 实体：{outcome['created']} 个\n"
+                f"格式：{outcome['format']} {outcome['target_version']}\n"
+                f"保存校验：通过\n已自动打开：{'是' if outcome['opened'] else '否'}",
+            )
+            self.status.set(f"OpenCADStudio 原生绘图完成：{outcome['path']}")
         except Exception as exc:
-            messagebox.showerror("DXF 生成失败", f"{type(exc).__name__}: {exc}")
+            self.status.set("OpenCADStudio 绘图失败")
+            messagebox.showerror("OpenCADStudio 绘图失败", f"{type(exc).__name__}: {exc}")
 
     def save_json(self):
         if not self.result:

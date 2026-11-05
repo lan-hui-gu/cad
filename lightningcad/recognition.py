@@ -42,14 +42,12 @@ def _line_orientation(angle: float) -> str:
 
 def _detect_lines(edges: np.ndarray) -> list[dict]:
     height, width = edges.shape[:2]
-    minimum = max(28, int(min(height, width) * 0.045))
-    raw = cv2.HoughLinesP(
-        edges, 1, np.pi / 180.0, threshold=48,
-        minLineLength=minimum, maxLineGap=18
-    )
+    minimum = max(12, int(min(height, width) * 0.025))
+    threshold = max(20, min(48, int(min(height, width) * 0.15)))
+    max_gap = max(5, int(min(height, width) * 0.012))
+    raw = cv2.HoughLinesP(edges, 1, np.pi / 180.0, threshold=threshold, minLineLength=minimum, maxLineGap=max_gap)
     if raw is None:
         return []
-
     segments = []
     for row in raw[:, 0, :]:
         x1, y1, x2, y2 = map(int, row)
@@ -57,39 +55,79 @@ def _detect_lines(edges: np.ndarray) -> list[dict]:
         if length < minimum:
             continue
         angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
-        start, end, constraint = snap_near_orthogonal(
-            (x1, y1), (x2, y2), tolerance_deg=12.0
-        )
         segments.append({
             "id": f"L{len(segments) + 1:04d}",
-            "start": [x1, y1],
-            "end": [x2, y2],
-            "reconstructed_start": start,
-            "reconstructed_end": end,
-            "length_px": round(length, 2),
-            "angle_deg": round(angle, 2),
+            "start": [x1, y1], "end": [x2, y2],
+            "length_px": round(length, 2), "angle_deg": round(angle, 2),
             "orientation": _line_orientation(angle),
-            "geometry_constraint": constraint,
-            "category": "line_review_candidate",
-            "status": "needs_review",
+            "category": "line_review_candidate", "status": "needs_review",
         })
-
     segments.sort(key=lambda item: item["length_px"], reverse=True)
-    kept: list[dict] = []
+    kept = []
     for item in segments:
-        midpoint = np.mean([item["start"], item["end"]], axis=0)
+        a, b = np.asarray(item["start"], dtype=float), np.asarray(item["end"], dtype=float)
+        direction = b - a
+        direction /= max(float(np.linalg.norm(direction)), 1e-9)
+        normal = np.array([-direction[1], direction[0]])
+        midpoint = (a + b) / 2.0
+        interval = sorted((float(np.dot(a, direction)), float(np.dot(b, direction))))
         duplicate = False
         for old in kept:
-            old_midpoint = np.mean([old["start"], old["end"]], axis=0)
-            angle_diff = abs(item["angle_deg"] - old["angle_deg"])
-            angle_diff = min(angle_diff, 180.0 - angle_diff)
-            if np.linalg.norm(midpoint - old_midpoint) < 10 and angle_diff < 4:
+            oa, ob = np.asarray(old["start"], dtype=float), np.asarray(old["end"], dtype=float)
+            old_direction = ob - oa
+            old_direction /= max(float(np.linalg.norm(old_direction)), 1e-9)
+            angle_diff = math.degrees(math.acos(float(np.clip(abs(np.dot(direction, old_direction)), -1.0, 1.0))))
+            perpendicular = abs(float(np.dot(midpoint - (oa + ob) / 2.0, normal)))
+            old_interval = sorted((float(np.dot(oa, direction)), float(np.dot(ob, direction))))
+            overlap = max(0.0, min(interval[1], old_interval[1]) - max(interval[0], old_interval[0]))
+            shorter = max(1.0, min(interval[1] - interval[0], old_interval[1] - old_interval[0]))
+            if angle_diff <= 1.5 and perpendicular <= 2.4 and overlap / shorter >= 0.55:
                 duplicate = True
                 break
         if not duplicate:
             kept.append(item)
-    return kept[:250]
+    return kept[:600]
 
+
+def _detect_colored_markers(image: np.ndarray) -> list[dict]:
+    """Detect saturated blue/red triangular markers separately from grey linework."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    masks = {
+        "blue": cv2.inRange(hsv, np.array([90, 100, 70], dtype=np.uint8), np.array([135, 255, 255], dtype=np.uint8)),
+        "red": cv2.inRange(hsv, np.array([0, 100, 70], dtype=np.uint8), np.array([30, 255, 255], dtype=np.uint8)),
+    }
+    found = []
+    for color, mask in masks.items():
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            area = abs(float(cv2.contourArea(contour)))
+            if not 1.5 <= area <= 90:
+                continue
+            x, y, width, height = cv2.boundingRect(contour)
+            if min(width, height) < 2 or max(width, height) > 18:
+                continue
+            perimeter = float(cv2.arcLength(contour, True))
+            if perimeter <= 0:
+                continue
+            polygon = cv2.approxPolyDP(contour, 0.15 * perimeter, True)
+            if len(polygon) != 3 or area / max(1.0, float(width * height)) < 0.16:
+                continue
+            moments = cv2.moments(contour)
+            if abs(moments["m00"]) < 1e-9:
+                continue
+            center = [float(moments["m10"] / moments["m00"]), float(moments["m01"] / moments["m00"])]
+            found.append({
+                "center": center, "bbox": [int(x), int(y), int(width), int(height)],
+                "vertices": polygon.reshape(-1, 2).astype(int).tolist(),
+                "color": color, "category": "test_point_candidate",
+                "label": "", "status": "needs_review",
+            })
+    found.sort(key=lambda item: (item["center"][1], item["center"][0]))
+    unique = []
+    for marker in found:
+        if not any(math.dist(marker["center"], old["center"]) < 4.0 for old in unique):
+            unique.append(marker)
+    return unique[:100]
 
 def _detect_contours(binary: np.ndarray) -> list[dict]:
     contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -250,6 +288,7 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
     lines: list[dict] = []
     contours = _detect_contours(binary)
     triangles = _detect_triangles(binary)
+    colored_markers = _detect_colored_markers(work)
     round_symbols = _detect_round_symbols(binary)
     curves = _detect_curves(binary)
 
@@ -282,20 +321,18 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
             "status": "needs_review",
         })
 
-    for triangle in triangles:
-        center = triangle["center"]
+    label_radius = max(30.0, min(80.0, max(work.shape[:2]) * 0.06))
+    for marker in colored_markers:
         best = None
         for text in texts:
             text_center = _rect_center(text.get("bbox"))
             if text_center is None:
                 continue
-            distance = math.dist(center, text_center)
+            distance = math.dist(marker["center"], text_center)
             if best is None or distance < best[0]:
                 best = (distance, text)
-        if best and best[0] < 110:
-            label = best[1]["text"].strip()
-            if len(label) <= 6:
-                triangle["label"] = label
+        if best and best[0] <= label_radius:
+            marker["label"] = best[1]["text"].strip()
 
     # Engineering semantics are not inferred automatically.
     # The user labels simplified geometry in the annotation stage.
@@ -342,6 +379,7 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
         "marking_complete": False,
         "contours": contours,
         "triangles": triangles,
+        "colored_markers": colored_markers,
         "round_symbols": round_symbols,
         "curves": curves,
         "texts": texts,
@@ -375,6 +413,14 @@ def create_overlay(prepared: dict, result: dict) -> np.ndarray:
         x, y, width, _ = triangle["bbox"]
         label = triangle.get("label") or "TP?"
         cv2.putText(image, label, (x + width + 3, max(14, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (20, 20, 230), 1)
+
+    for marker in result.get("colored_markers", []):
+        points = np.asarray(marker["vertices"], dtype=np.int32).reshape((-1, 1, 2))
+        color = (255, 80, 30) if marker.get("color") == "blue" else (20, 80, 240)
+        cv2.polylines(image, [points], True, color, 2, cv2.LINE_AA)
+        if marker.get("label"):
+            x, y, width, _ = marker["bbox"]
+            cv2.putText(image, marker["label"], (x + width + 3, max(14, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
     for symbol in result["round_symbols"]:
         x, y = map(int, symbol["center"])

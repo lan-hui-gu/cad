@@ -39,6 +39,8 @@ def build_drawing_model(result: dict) -> dict:
 
     points = []
     for point in result.get("point_marks", []):
+        if point.get("status", "marked") != "marked":
+            continue
         category = point.get("category", "unmarked")
         if category not in POINT_LAYERS:
             continue

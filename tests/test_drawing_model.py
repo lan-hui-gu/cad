@@ -28,3 +28,20 @@ def test_drawing_model_contains_only_confirmed_features():
     assert len(model["lines"]) == 1
     assert len(model["points"]) == 1
     assert model["points"][0]["label"] == "Y1"
+
+
+def test_unconfirmed_auto_detected_point_is_not_exported():
+    result = {
+        "marking_complete": True,
+        "image_width": 100,
+        "image_height": 100,
+        "resize_scale": 1.0,
+        "lines": [],
+        "curves": [],
+        "point_marks": [
+            {"id": "P1", "position": [50, 50], "category": "test_point", "label": "Y1", "status": "needs_review"}
+        ],
+        "texts": [],
+    }
+    model = build_drawing_model(result)
+    assert model["points"] == []

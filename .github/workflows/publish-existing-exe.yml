@@ -21,7 +21,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download 41978439951 \
+          gh run download 41985729731 \
             --repo "$GITHUB_REPOSITORY" \
             --name LightningCAD-AI-EXE-Windows-x64 \
             --dir ./release
@@ -39,7 +39,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="v0.2.0-alpha.1"
+          TAG="v0.3.0-alpha.1"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" release/LightningCAD-AI.exe \
               --clobber --repo "$GITHUB_REPOSITORY"
@@ -47,7 +47,7 @@ jobs:
             gh release create "$TAG" release/LightningCAD-AI.exe \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "LightningCAD-AI v0.2.0 Alpha · Windows 单文件 EXE" \
+              --title "LightningCAD-AI v0.3.0 Alpha · 线条简化与人工标记重绘" \
               --notes "Windows x64 独立 EXE（PyInstaller onefile）。不需要安装 Python。已通过 Windows CI 的 10 项自动化测试，但仍属草图识别 Alpha 版本，生成的工程图需要人工校核。构建来源：GitHub Actions Run 41978439951。" \
               --prerelease
           fi

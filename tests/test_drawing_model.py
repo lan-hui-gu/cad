@@ -36,7 +36,9 @@ def test_unconfirmed_auto_detected_point_is_not_exported():
         "image_width": 100,
         "image_height": 100,
         "resize_scale": 1.0,
-        "lines": [],
+        "lines": [
+            {"id": "L1", "start": [10, 10], "end": [90, 10], "category": "building_structure", "status": "marked"}
+        ],
         "curves": [],
         "point_marks": [
             {"id": "P1", "position": [50, 50], "category": "test_point", "label": "Y1", "status": "needs_review"}

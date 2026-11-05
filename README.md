@@ -83,9 +83,9 @@
 
 推送到 main 或 feature/** 分支、创建 PR，或手动触发 Actions，都会运行 Windows 测试和打包任务。
 
-在仓库的 Actions 页面打开最近一次成功的 Windows build，在 Artifacts 下载 LightningCAD-AI-Windows-x64 压缩包。解压后运行 LightningCAD-AI\LightningCAD-AI.exe。
+工作流采用 PyInstaller `--onefile`，最终产物为单个 `LightningCAD-AI.exe`。无需安装 Python，也无需单独保留依赖文件夹。GitHub Actions Artifact 下载后解压，文件夹中只有该 EXE。
 
-当前采用 PyInstaller onedir 目录包，优先保证 OCR 模型和原生 DLL 的收集完整、便于定位问题；不是单文件 EXE。待 Windows 实机验证稳定后再评估 onefile。
+首次启动时，单文件程序会将内部依赖释放到 Windows 临时目录；启动速度可能比 onedir 稍慢。OCR 模型与原生运行库均随 EXE 一起打包。
 
 ## 识别能力边界
 

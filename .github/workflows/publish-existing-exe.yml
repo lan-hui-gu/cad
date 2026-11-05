@@ -1,6 +1,11 @@
 name: Publish OpenCADStudio-native Windows EXE
 
 on:
+  push:
+    branches:
+      - feature/lightningcad-open-source-core
+    paths:
+      - .github/workflows/publish-existing-exe.yml
   workflow_dispatch:
 
 permissions:
@@ -12,13 +17,21 @@ jobs:
     name: Publish tested Windows EXE
     runs-on: ubuntu-latest
     steps:
-      - name: Find successful build for this source commit
+      - name: Wait for the Windows build of this commit
         id: build
         env:
           GH_TOKEN: \${{ github.token }}
         shell: bash
         run: |
-          RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow windows-build.yml --branch feature/lightningcad-open-source-core --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          RUN_ID=""
+          for attempt in $(seq 1 60); do
+            RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow windows-build.yml --branch feature/lightningcad-open-source-core --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+            if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+              break
+            fi
+            echo "Waiting for the Windows EXE build for $GITHUB_SHA ($attempt/60)..."
+            sleep 15
+          done
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "No successful Windows build found for commit $GITHUB_SHA."
             exit 1

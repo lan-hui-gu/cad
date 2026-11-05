@@ -2,14 +2,14 @@
 
 ## Windows 单文件 EXE 下载
 
-**[直接下载 LightningCAD-AI.exe（Windows 64 位）](https://github.com/lan-hui-gu/cad/releases/download/v0.2.0-alpha.1/LightningCAD-AI.exe)**
+**[直接下载 LightningCAD-AI.exe（Windows 64 位）](https://github.com/lan-hui-gu/cad/releases/download/v0.3.0-alpha.1/LightningCAD-AI.exe)**
 
 [查看 GitHub Releases 发布页](https://github.com/lan-hui-gu/cad/releases/tag/v0.2.0-alpha.1)
 
-- 版本：v0.2.0-alpha.1（测试版）
+- 版本：v0.3.0-alpha.1（线条简化与人工标记测试版）
 - 文件：LightningCAD-AI.exe（约 125.5 MB）
 - 下载后双击运行，不需要另外安装 Python，也不需要保留依赖文件夹。
-- 已通过 GitHub Actions Windows 构建及自动化测试；真实电脑上的启动和图纸识别精度仍需现场验证。
+- 已通过 GitHub Actions Windows 构建及 14 项自动化测试；采用“识别—简化—标记—Python 重绘”流程。真实电脑上的启动和图纸识别精度仍需现场验证。
 - 本版为识图候选和 DXF 重绘辅助工具，未核准的尺寸、检测点和线路不得直接用于正式检测报告。
 
 ## 源码与开发

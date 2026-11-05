@@ -246,7 +246,8 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     edges = cv2.Canny(blurred, 45, 135, L2gradient=True)
 
-    lines = _detect_lines(edges)
+    raw_lines = _detect_lines(edges)
+    lines: list[dict] = []
     contours = _detect_contours(binary)
     triangles = _detect_triangles(binary)
     round_symbols = _detect_round_symbols(binary)
@@ -266,7 +267,7 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
         center = _rect_center(text.get("bbox"))
         nearest = None
         if center:
-            for line in lines:
+            for line in raw_lines:
                 midpoint = np.mean([line["start"], line["end"]], axis=0)
                 distance = float(np.linalg.norm(np.asarray(center) - midpoint))
                 if nearest is None or distance < nearest[0]:
@@ -296,27 +297,8 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
             if len(label) <= 6:
                 triangle["label"] = label
 
-    outlines = [c for c in contours if c["category"] == "building_outline_candidate"]
-    for line in lines:
-        midpoint = np.mean([line["start"], line["end"]], axis=0)
-        near_outline = False
-        for contour in outlines:
-            vertices = contour["vertices"]
-            for index, start in enumerate(vertices):
-                end = vertices[(index + 1) % len(vertices)]
-                if _point_segment_distance(midpoint, start, end) < 18:
-                    near_outline = True
-                    break
-            if near_outline:
-                break
-        if near_outline:
-            line["category"] = "structure_or_strip_review_candidate"
-        if any(
-            dimension.get("nearest_line_id") == line["id"]
-            and (dimension.get("nearest_line_distance_px") or 1e9) < 100
-            for dimension in dimensions
-        ):
-            line["category"] = "dimension_line_candidate"
+    # Engineering semantics are not inferred automatically.
+    # The user labels simplified geometry in the annotation stage.
 
     intersections = []
     for i, first in enumerate(lines):
@@ -354,7 +336,10 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
         "image_width": int(work.shape[1]),
         "image_height": int(work.shape[0]),
         "resize_scale": float(resize_scale),
+        "raw_lines": raw_lines,
         "lines": lines,
+        "point_marks": [],
+        "marking_complete": False,
         "contours": contours,
         "triangles": triangles,
         "round_symbols": round_symbols,

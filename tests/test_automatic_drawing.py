@@ -77,3 +77,5 @@ def test_automatic_model_converts_directly_to_native_opencad_entities():
     layers = {item["layer"] for item in entities}
     assert {"Line", "LwPolyline", "Solid", "Circle", "Text"} <= types
     assert {"SIMPLIFIED_GEOMETRY", "SIMPLIFIED_SYMBOL", "SIMPLIFIED_TEXT", "ARC"} <= layers
+    text_entity = next(item for item in entities if item["type"] == "Text")
+    assert text_entity["height"] == 12 * model["calibration"]["mm_per_px"]

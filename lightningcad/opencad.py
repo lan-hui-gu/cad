@@ -66,7 +66,7 @@ def _valid_symbol_position(position) -> bool:
 
 def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = None) -> list[dict]:
     if model.get("review_status") not in {"user_marked", "auto_simplified"}:
-        raise ValueError("工程图模型既未完成自动简化，也未完成人工标记。")
+        raise ValueError("工程图模型尚未完成自动简化或人工标记。")
     if mm_per_px is not None and mm_per_px <= 0:
         raise ValueError("比例标定 mm/px 必须大于 0。")
     height = float(model["image_height"])

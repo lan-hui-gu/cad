@@ -33,7 +33,7 @@ LINE_COLORS = {
 class LightningCADApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LightningCAD-AI · 手绘识别 → 简化图 → 自动 CAD 绘图")
+        self.title("LightningCAD-AI v0.5.0 · 手绘识别 → 简化图 → 自动 CAD 绘图")
         self.geometry("1560x960")
         self.minsize(1120, 720)
         self.source_path: Path | None = None

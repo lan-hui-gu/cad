@@ -12,6 +12,7 @@ def sample_result():
         "image_width": 300,
         "image_height": 200,
         "resize_scale": 1.0,
+        "drawing_region": {"expanded_bbox": [0, 0, 250, 190]},
         "raw_lines": [
             {"id": "L1", "start": [10, 180], "end": [210, 180], "length_px": 200},
             {"id": "L2", "start": [20, 20], "end": [20, 120], "length_px": 100},
@@ -20,16 +21,23 @@ def sample_result():
             {"id": "S1", "start": [10, 180], "end": [210, 180]},
             {"id": "S2", "start": [20, 20], "end": [20, 120]},
         ],
-        "curves": [{"id": "C1", "points": [[40, 50], [50, 40], [60, 45]]}],
+        "curves": [
+            {"id": "C1", "points": [[40, 50], [50, 40], [60, 45]]},
+            {"id": "C2", "points": [[270, 160], [280, 170], [290, 180]]},
+        ],
         "triangles": [
             {"center": [20, 20], "vertices": [[15, 25], [25, 25], [20, 14]], "label": "Y1"}
         ],
         "colored_markers": [
             {"center": [20.5, 20], "vertices": [[16, 25], [25, 25], [20, 15]], "label": ""}
         ],
-        "round_symbols": [{"center": [100, 100], "radius_px": 5}],
+        "round_symbols": [
+            {"center": [100, 100], "radius_px": 5},
+            {"center": [280, 180], "radius_px": 5},
+        ],
         "texts": [
-            {"text": "9.4m", "bbox": [70, 5, 30, 12], "category": "dimension_text_candidate", "confidence": 0.9}
+            {"text": "9.4m", "bbox": [70, 5, 30, 12], "category": "dimension_text_candidate", "confidence": 0.9},
+            {"text": "页眉杂字", "bbox": [270, 160, 25, 12], "category": "annotation_text_candidate", "confidence": 0.8}
         ],
         "dimensions": [
             {"text": "9.4m", "dimension": {"value_mm": 9400}, "nearest_line_id": "L1", "nearest_line_distance_px": 12}

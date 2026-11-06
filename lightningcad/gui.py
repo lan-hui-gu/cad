@@ -232,7 +232,7 @@ class LightningCADApp(tk.Tk):
             self._render()
             stats = self.result["simplification"]
             self.status.set(
-                f"简化图生成完成：原始 {stats['raw_segment_count']} 段 → 简化后 {stats['simplified_segment_count']} 段。"
+                f"简化图生成完成：原始 {stats['raw_segment_count']} 段，主图区域保留 {stats.get('region_candidate_segment_count', stats['raw_segment_count'])} 段，简化后 {stats['simplified_segment_count']} 段。"
                 "现在可以直接点击“3.根据简化图自动生成 CAD”，无需逐条标记线段。"
             )
         except Exception as exc:

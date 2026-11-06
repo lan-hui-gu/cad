@@ -82,14 +82,15 @@ def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = Non
         name, color = LAYERS[layer]
         entities.append({"type": "Line", "start": _pt(a, height, factor), "end": _pt(b, height, factor), "layer": name, "color": color})
 
-    def text(value, pos, layer="ocr_text"):
+    def text(value, pos, layer="ocr_text", height_px=None):
         value = str(value).strip()
         if not value:
             return
         if layer not in LAYERS:
             layer = "ocr_text"
         name, color = LAYERS[layer]
-        entities.append({"type": "Text", "value": value, "position": _pt(pos, height, factor), "height": text_height, "rotation_deg": 0.0, "layer": name, "color": color})
+        entity_height = max(2.5, float(height_px) * factor) if height_px is not None else text_height
+        entities.append({"type": "Text", "value": value, "position": _pt(pos, height, factor), "height": entity_height, "rotation_deg": 0.0, "layer": name, "color": color})
 
     for item in model.get("lines", []):
         if item.get("category") in LAYERS:
@@ -166,7 +167,9 @@ def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = Non
             text(label, [x + size * 1.25, y - size * 1.1], category)
 
     for item in model.get("texts", []):
-        text(item.get("text", ""), item["position"], item.get("category", "ocr_text"))
+        box = item.get("bbox")
+        text_height_px = float(box[3]) if isinstance(box, (list, tuple)) and len(box) == 4 else None
+        text(item.get("text", ""), item["position"], item.get("category", "ocr_text"), text_height_px)
     if not entities:
         raise ValueError("没有可交给 OpenCADStudio 绘制的已确认图元。")
     return entities

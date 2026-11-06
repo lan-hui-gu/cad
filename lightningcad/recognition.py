@@ -363,9 +363,9 @@ def analyze_image(path: str | Path, rotation: int = 0, use_ocr: bool = True) -> 
 
     if not dimensions:
         warnings.append("未建立可靠尺寸关联；OCR 数值和尺寸线必须人工核对。")
-    warnings.append("带 X 标记的边线可能是建筑结构或明装接闪带，必须人工确认。")
-    warnings.append("带箭头/弯钩的细线属于说明引线候选；图例引下线符号需单独确认。")
-    warnings.append("本结果为识别候选，不是已审核的检测成果。")
+    warnings.append("自动 CAD 模式会忠实转绘简化图元；未分类线段统一进入 SIMPLIFIED_GEOMETRY 图层，不擅自判断其工程语义。")
+    warnings.append("尺寸 OCR 与自动比例均为识别候选；未能建立可靠比例时使用像素单位，不代表现场实测尺寸。")
+    warnings.append("自动转绘只复现简化图形，不判断防雷系统电气连接可靠性、规范符合性或检测结论。")
 
     result = {
         "source_path": str(path),

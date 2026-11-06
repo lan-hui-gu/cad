@@ -180,6 +180,7 @@ class OpenCADStudioSession:
 
     def __init__(self, executable: str | Path, startup_timeout: float = 90.0):
         self.executable = str(Path(executable).resolve())
+        self.document_id: int | str | None = None
         if not Path(self.executable).is_file():
             raise FileNotFoundError(f"找不到 OpenCADStudio：{self.executable}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -237,7 +238,9 @@ class OpenCADStudioSession:
                 detail = json.loads(body)
             except json.JSONDecodeError:
                 detail = {"message": body}
-            raise OpenCADStudioError(f"OpenCADStudio HTTP {exc.code}: {detail.get('code', '')} {detail.get('message', body)}") from exc
+            code = detail.get("code", "unknown")
+            message = detail.get("error") or detail.get("message") or body
+            raise OpenCADStudioError(f"OpenCADStudio HTTP {exc.code}: {code}: {message}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise OpenCADStudioError(f"无法连接 OpenCADStudio 本地服务：{exc}") from exc
         try:
@@ -248,15 +251,42 @@ class OpenCADStudioSession:
             raise OpenCADStudioError(f"OpenCADStudio 操作失败 [{result.get('code', 'unknown')}]：{result.get('message', result)}")
         return result
 
+    def read_state(self):
+        """Refresh the active document snapshot and retain its explicit id."""
+        state = self.request("GET", "/state")
+        candidates = [state]
+        if isinstance(state, dict):
+            candidates.extend([state.get("state"), state.get("result")])
+            result = state.get("result")
+            if isinstance(result, dict):
+                candidates.append(result.get("state"))
+        document_id = next(
+            (
+                candidate.get("document_id")
+                for candidate in candidates
+                if isinstance(candidate, dict) and candidate.get("document_id") is not None
+            ),
+            None,
+        )
+        if document_id is None:
+            raise OpenCADStudioError(
+                f"OpenCADStudio /state 未返回活动图纸 document_id：{json.dumps(state, ensure_ascii=False)[:800]}"
+            )
+        self.document_id = document_id
+        return state
+
     def create_document(self):
         self.request("POST", "/documents", {})
-        return self.request("GET", "/state")
+        return self.read_state()
 
     def create_entities(self, entities):
         return self.request("POST", "/entities", {"entities": entities}, timeout=180)
 
     def save_verified(self, path, target_format, target_version, overwrite):
+        if self.document_id is None:
+            self.read_state()
         return self.request("POST", "/save_verified", {
+            "document_id": self.document_id,
             "path": path,
             "target_format": target_format,
             "target_version": target_version,

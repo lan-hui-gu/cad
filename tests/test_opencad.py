@@ -45,3 +45,30 @@ def test_unconfirmed_point_candidate_is_omitted():
     data["points"][0]["status"] = "needs_review"
     entities = drawing_model_to_opencad_entities(data)
     assert not any(e.get("layer") == "TEST_POINT" for e in entities)
+
+
+def test_save_verified_supplies_document_id_from_state():
+    from lightningcad.opencad import OpenCADStudioSession
+
+    session = OpenCADStudioSession.__new__(OpenCADStudioSession)
+    session.document_id = None
+    calls = []
+
+    def fake_request(method, path, payload=None, timeout=30):
+        calls.append((method, path, payload, timeout))
+        if method == "POST" and path == "/documents":
+            return {"ok": True}
+        if method == "GET" and path == "/state":
+            return {"document_id": 42, "documents": [{"id": 42, "title": "Untitled"}]}
+        if method == "POST" and path == "/save_verified":
+            return {"ok": True, "verified": True}
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    session.request = fake_request
+    session.create_document()
+    result = session.save_verified("C:/out/test.dwg", "dwg", "2018", False)
+
+    save_call = next(call for call in calls if call[1] == "/save_verified")
+    assert session.document_id == 42
+    assert save_call[2]["document_id"] == 42
+    assert result["verified"] is True

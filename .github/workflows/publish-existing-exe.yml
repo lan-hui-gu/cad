@@ -1,4 +1,4 @@
-name: Publish LightningCAD-AI v0.5.0 automatic drawing EXE
+name: Publish LightningCAD-AI v0.5.1 document ID fix EXE
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
       - feature/auto-cad-from-simplified-drawing
     paths:
       - .github/workflows/publish-existing-exe.yml
+      - lightningcad/**
+      - tests/**
+      - pyproject.toml
+      - README.md
   workflow_dispatch:
 
 permissions:
@@ -60,9 +64,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="v0.5.0-alpha.1"
-          TITLE="LightningCAD-AI v0.5.0 Alpha · simplified drawing to automatic CAD"
-          NOTES="Windows x64 single-file EXE. Default workflow: import a hand sketch, recognize drawing primitives, generate a clean white-background simplified drawing, then automatically create native CAD entities in OpenCADStudio directly from that simplified geometry. No per-segment manual marking is required.\n\nThe simplified preview and CAD export share the same canonical geometry model. The build includes line, curve, triangle/circle symbol and OCR text conversion, plus cautious OCR-dimension scale estimation. OpenCADStudio v2026.44 must be installed separately.\n\nValidation: 26 Windows automated tests passed and the standalone EXE build succeeded. This is an Alpha release. Review the simplified preview and verify the resulting DWG in the target OpenCADStudio installation. Automatically inferred scale is an estimate, not a substitute for field measurement; if no reliable scale is available, pixel units are used."
+          TAG="v0.5.1-alpha.1"
+          TITLE="LightningCAD-AI v0.5.1 Alpha · OpenCADStudio document ID fix"
+          NOTES="Windows x64 single-file EXE. Fixes OpenCADStudio v2026.44 HTTP 400 document_required during verified save: the client now reads /state, retains the active document_id, and supplies it to the save_verified operation. Default workflow: import a hand sketch, recognize drawing primitives, generate a clean white-background simplified drawing, then automatically create native CAD entities in OpenCADStudio directly from that simplified geometry. No per-segment manual marking is required.\n\nThe simplified preview and CAD export share the same canonical geometry model. The build includes line, curve, triangle/circle symbol and OCR text conversion, plus cautious OCR-dimension scale estimation. OpenCADStudio v2026.44 must be installed separately.\n\nValidation: 27 Windows automated tests passed and the standalone EXE build succeeded. This is an Alpha release. Review the simplified preview and verify the resulting DWG in the target OpenCADStudio installation. Automatically inferred scale is an estimate, not a substitute for field measurement; if no reliable scale is available, pixel units are used."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" release/LightningCAD-AI.exe release/LightningCAD-AI.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
           else

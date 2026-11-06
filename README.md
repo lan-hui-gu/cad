@@ -3,14 +3,14 @@
 防雷检测手绘草图自动简化与 CAD 工程图生成工具。默认工作流为“手绘照片 → 自动识别 → 白底简化图 → 自动矢量转绘 → OpenCADStudio 原生 DWG/DXF”，不要求用户逐条标记或输入每根线的坐标。
 
 
-## Windows 下载（v0.5.0 Alpha）
+## Windows 下载（v0.5.1 Alpha）
 
-<https://github.com/lan-hui-gu/cad/releases/tag/v0.5.0-alpha.1>
+<https://github.com/lan-hui-gu/cad/releases/tag/v0.5.1-alpha.1>
 
-- [下载 Windows x64 单文件 EXE](https://github.com/lan-hui-gu/cad/releases/download/v0.5.0-alpha.1/LightningCAD-AI.exe)
-- [下载 SHA256 校验文件](https://github.com/lan-hui-gu/cad/releases/download/v0.5.0-alpha.1/LightningCAD-AI.exe.sha256)
+- [下载 Windows x64 单文件 EXE](https://github.com/lan-hui-gu/cad/releases/download/v0.5.1-alpha.1/LightningCAD-AI.exe)
+- [下载 SHA256 校验文件](https://github.com/lan-hui-gu/cad/releases/download/v0.5.1-alpha.1/LightningCAD-AI.exe.sha256)
 
-本版本通过 Windows CI 的 26 项自动化测试，并完成单文件 EXE 编译。它仍是 Alpha 版本；需要单独安装 OpenCADStudio v2026.44。正式用于检测制图前，应检查白底简化预览并在目标 CAD 环境中核对生成结果。
+本版本修复 OpenCADStudio v2026.44 保存阶段缺少 document_id 导致的 HTTP 400 错误；通过 Windows CI 的 27 项自动化测试，并完成单文件 EXE 编译。它仍是 Alpha 版本；需要单独安装 OpenCADStudio v2026.44。正式用于检测制图前，应检查白底简化预览并在目标 CAD 环境中核对生成结果。
 
 ## 项目目标
 

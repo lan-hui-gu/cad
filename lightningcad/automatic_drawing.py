@@ -22,6 +22,25 @@ def _text_center(item: dict) -> list[float] | None:
     return [x + width / 2.0, y + height / 2.0]
 
 
+def _inside_region(point, region: dict | None) -> bool:
+    if region is None:
+        return True
+    if not _valid_point(point):
+        return False
+    x1, y1, x2, y2 = region.get("expanded_bbox", [0, 0, 0, 0])
+    return x1 <= float(point[0]) <= x2 and y1 <= float(point[1]) <= y2
+
+
+def _bbox_intersects_region(box, region: dict | None) -> bool:
+    if region is None:
+        return True
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return False
+    x, y, width, height = map(float, box)
+    x1, y1, x2, y2 = region.get("expanded_bbox", [0, 0, 0, 0])
+    return x + width >= x1 and x <= x2 and y + height >= y1 and y <= y2
+
+
 def infer_mm_per_px(result: dict) -> dict:
     """Estimate image scale from OCR dimensions linked to detected dimension lines."""
     resize_scale = float(result.get("resize_scale", 1.0) or 1.0)
@@ -40,12 +59,19 @@ def infer_mm_per_px(result: dict) -> dict:
     )
     max_text_line_distance = max(80.0, max_dimension * 0.18)
 
+    region = result.get("drawing_region")
     for item in result.get("dimensions", []):
         parsed = item.get("dimension") or parse_dimension_text(item.get("text", ""))
         if not parsed or parsed.get("value_mm") is None:
             continue
         line = raw_by_id.get(item.get("nearest_line_id"))
         if not line:
+            continue
+        if region and not _bbox_intersects_region(
+            [min(line["start"][0], line["end"][0]), min(line["start"][1], line["end"][1]),
+             abs(line["end"][0] - line["start"][0]), abs(line["end"][1] - line["start"][1])],
+            region,
+        ):
             continue
         distance = item.get("nearest_line_distance_px")
         if distance is not None and float(distance) > max_text_line_distance:
@@ -185,10 +211,11 @@ def build_automatic_drawing_model(result: dict) -> dict:
         })
 
     curves = []
+    region = result.get("drawing_region")
     for index, curve in enumerate(result.get("curves", []), start=1):
         points = curve.get("points") or []
         points = [list(map(float, point)) for point in points if _valid_point(point)]
-        if len(points) >= 2:
+        if len(points) >= 2 and any(_inside_region(point, region) for point in points):
             curves.append({
                 "id": curve.get("id", f"AUTO-C{index:04d}"),
                 "category": "arc",
@@ -196,11 +223,11 @@ def build_automatic_drawing_model(result: dict) -> dict:
                 "closed": bool(curve.get("closed", False)),
             })
 
-    symbols = _collect_triangles(result)
+    symbols = [item for item in _collect_triangles(result) if _inside_region(item.get("center"), region)]
     for symbol in result.get("round_symbols", []):
         center = symbol.get("center")
         radius = symbol.get("radius_px")
-        if _valid_point(center) and isinstance(radius, (int, float)) and float(radius) > 0:
+        if _valid_point(center) and _inside_region(center, region) and isinstance(radius, (int, float)) and float(radius) > 0:
             symbols.append({
                 "kind": "circle",
                 "center": list(map(float, center)),
@@ -214,6 +241,10 @@ def build_automatic_drawing_model(result: dict) -> dict:
         box = item.get("bbox")
         value = str(item.get("text", "")).strip()
         if not value or not isinstance(box, (list, tuple)) or len(box) != 4:
+            continue
+        parsed = item.get("dimension") or parse_dimension_text(value)
+        has_explicit_unit = bool(parsed and parsed.get("unit") in {"m", "cm", "mm"})
+        if not has_explicit_unit and not _bbox_intersects_region(box, region):
             continue
         x, y, width, height = map(float, box)
         texts.append({

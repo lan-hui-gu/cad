@@ -33,6 +33,9 @@ LAYERS = {
     "metal_component": ("METAL_COMPONENT", 7),
     "metal_pipe": ("METAL_PIPE", 7),
     "ocr_text": ("OCR_TEXT", 2),
+    "auto_geometry": ("SIMPLIFIED_GEOMETRY", 7),
+    "auto_symbol": ("SIMPLIFIED_SYMBOL", 1),
+    "auto_text": ("SIMPLIFIED_TEXT", 7),
 }
 
 
@@ -57,9 +60,13 @@ def _pt(point, height: float, factor: float) -> list[float]:
     return [float(point[0]) * factor, (height - float(point[1])) * factor, 0.0]
 
 
+def _valid_symbol_position(position) -> bool:
+    return isinstance(position, (list, tuple)) and len(position) == 2 and all(isinstance(value, (int, float)) for value in position)
+
+
 def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = None) -> list[dict]:
-    if model.get("review_status") != "user_marked":
-        raise ValueError("工程图模型尚未完成用户标记。")
+    if model.get("review_status") not in {"user_marked", "auto_simplified"}:
+        raise ValueError("工程图模型尚未完成自动简化或人工标记。")
     if mm_per_px is not None and mm_per_px <= 0:
         raise ValueError("比例标定 mm/px 必须大于 0。")
     height = float(model["image_height"])
@@ -75,12 +82,15 @@ def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = Non
         name, color = LAYERS[layer]
         entities.append({"type": "Line", "start": _pt(a, height, factor), "end": _pt(b, height, factor), "layer": name, "color": color})
 
-    def text(value, pos, layer="ocr_text"):
+    def text(value, pos, layer="ocr_text", height_px=None):
         value = str(value).strip()
         if not value:
             return
+        if layer not in LAYERS:
+            layer = "ocr_text"
         name, color = LAYERS[layer]
-        entities.append({"type": "Text", "value": value, "position": _pt(pos, height, factor), "height": text_height, "rotation_deg": 0.0, "layer": name, "color": color})
+        entity_height = max(2.5, float(height_px) * factor) if height_px is not None else text_height
+        entities.append({"type": "Text", "value": value, "position": _pt(pos, height, factor), "height": entity_height, "rotation_deg": 0.0, "layer": name, "color": color})
 
     for item in model.get("lines", []):
         if item.get("category") in LAYERS:
@@ -91,6 +101,33 @@ def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = Non
         if len(points) >= 2:
             name, color = LAYERS["arc"]
             entities.append({"type": "LwPolyline", "vertices": [_pt(p, height, factor) for p in points], "closed": bool(item.get("closed", False)), "layer": name, "color": color})
+
+    for symbol in model.get("symbols", []):
+        kind = symbol.get("kind")
+        name, color = LAYERS["auto_symbol"]
+        if kind == "triangle":
+            vertices = symbol.get("vertices") or []
+            if len(vertices) >= 3:
+                entities.append({
+                    "type": "Solid",
+                    "corners": [_pt(point, height, factor) for point in vertices[:4]],
+                    "layer": name,
+                    "color": color,
+                })
+            label = str(symbol.get("label", "")).strip()
+            if label and _valid_symbol_position(symbol.get("label_position")):
+                text(label, symbol["label_position"], "auto_text")
+        elif kind == "circle":
+            center = symbol.get("center")
+            radius = float(symbol.get("radius", 0))
+            if isinstance(center, (list, tuple)) and len(center) == 2 and radius > 0:
+                entities.append({
+                    "type": "Circle",
+                    "center": _pt(center, height, factor),
+                    "radius": radius * factor,
+                    "layer": name,
+                    "color": color,
+                })
 
     for mark in model.get("points", []):
         if mark.get("status", "marked") != "marked":
@@ -130,7 +167,9 @@ def drawing_model_to_opencad_entities(model: dict, mm_per_px: float | None = Non
             text(label, [x + size * 1.25, y - size * 1.1], category)
 
     for item in model.get("texts", []):
-        text(item.get("text", ""), item["position"])
+        box = item.get("bbox")
+        text_height_px = float(box[3]) if isinstance(box, (list, tuple)) and len(box) == 4 else None
+        text(item.get("text", ""), item["position"], item.get("category", "ocr_text"), text_height_px)
     if not entities:
         raise ValueError("没有可交给 OpenCADStudio 绘制的已确认图元。")
     return entities
@@ -141,6 +180,7 @@ class OpenCADStudioSession:
 
     def __init__(self, executable: str | Path, startup_timeout: float = 90.0):
         self.executable = str(Path(executable).resolve())
+        self.document_id: int | str | None = None
         if not Path(self.executable).is_file():
             raise FileNotFoundError(f"找不到 OpenCADStudio：{self.executable}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -198,7 +238,9 @@ class OpenCADStudioSession:
                 detail = json.loads(body)
             except json.JSONDecodeError:
                 detail = {"message": body}
-            raise OpenCADStudioError(f"OpenCADStudio HTTP {exc.code}: {detail.get('code', '')} {detail.get('message', body)}") from exc
+            code = detail.get("code", "unknown")
+            message = detail.get("error") or detail.get("message") or body
+            raise OpenCADStudioError(f"OpenCADStudio HTTP {exc.code}: {code}: {message}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise OpenCADStudioError(f"无法连接 OpenCADStudio 本地服务：{exc}") from exc
         try:
@@ -209,15 +251,42 @@ class OpenCADStudioSession:
             raise OpenCADStudioError(f"OpenCADStudio 操作失败 [{result.get('code', 'unknown')}]：{result.get('message', result)}")
         return result
 
+    def read_state(self):
+        """Refresh the active document snapshot and retain its explicit id."""
+        state = self.request("GET", "/state")
+        candidates = [state]
+        if isinstance(state, dict):
+            candidates.extend([state.get("state"), state.get("result")])
+            result = state.get("result")
+            if isinstance(result, dict):
+                candidates.append(result.get("state"))
+        document_id = next(
+            (
+                candidate.get("document_id")
+                for candidate in candidates
+                if isinstance(candidate, dict) and candidate.get("document_id") is not None
+            ),
+            None,
+        )
+        if document_id is None:
+            raise OpenCADStudioError(
+                f"OpenCADStudio /state 未返回活动图纸 document_id：{json.dumps(state, ensure_ascii=False)[:800]}"
+            )
+        self.document_id = document_id
+        return state
+
     def create_document(self):
         self.request("POST", "/documents", {})
-        return self.request("GET", "/state")
+        return self.read_state()
 
     def create_entities(self, entities):
         return self.request("POST", "/entities", {"entities": entities}, timeout=180)
 
     def save_verified(self, path, target_format, target_version, overwrite):
+        if self.document_id is None:
+            self.read_state()
         return self.request("POST", "/save_verified", {
+            "document_id": self.document_id,
             "path": path,
             "target_format": target_format,
             "target_version": target_version,

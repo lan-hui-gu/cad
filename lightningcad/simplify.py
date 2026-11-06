@@ -267,9 +267,71 @@ def simplify_segments(
     return output
 
 
+def detect_primary_drawing_region(result: dict) -> dict | None:
+    """Find the dominant closed sketch contour and a generous annotation margin."""
+    width = int(result.get("image_width", 0) or 0)
+    height = int(result.get("image_height", 0) or 0)
+    image_area = max(1, width * height)
+    candidates = []
+    for contour in result.get("contours", []):
+        box = contour.get("bbox")
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            continue
+        x, y, box_width, box_height = map(float, box)
+        area = float(contour.get("area_px2", 0) or 0)
+        fraction = area / image_area
+        if box_width < 24 or box_height < 24:
+            continue
+        if not 0.004 <= fraction <= 0.72:
+            continue
+        if contour.get("category") != "building_outline_candidate" and contour.get("vertex_count") != 4:
+            continue
+        aspect = box_width / max(box_height, 1.0)
+        if not 0.12 <= aspect <= 8.0:
+            continue
+        candidates.append((area, [x, y, box_width, box_height], fraction))
+
+    if not candidates:
+        return None
+
+    area, box, fraction = max(candidates, key=lambda item: item[0])
+    x, y, box_width, box_height = box
+    aspect = box_width / max(box_height, 1.0)
+    horizontal_margin_ratio = 0.20 if aspect < 0.75 else 0.14
+    margin_x = max(50.0, box_width * horizontal_margin_ratio)
+    margin_y = max(45.0, box_height * 0.18)
+    expanded = [
+        max(0.0, x - margin_x),
+        max(0.0, y - margin_y),
+        min(float(width), x + box_width + margin_x),
+        min(float(height), y + box_height + margin_y),
+    ]
+    return {
+        "source": "largest_closed_contour",
+        "bbox": [round(value, 2) for value in box],
+        "expanded_bbox": [round(value, 2) for value in expanded],
+        "area_fraction": round(fraction, 4),
+        "margin_px": [round(margin_x, 2), round(margin_y, 2)],
+    }
+
+
+def _segment_intersects_region(segment: dict, region: dict) -> bool:
+    x1, y1, x2, y2 = region["expanded_bbox"]
+    try:
+        ax, ay = map(float, segment["start"])
+        bx, by = map(float, segment["end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return max(ax, bx) >= x1 and min(ax, bx) <= x2 and max(ay, by) >= y1 and min(ay, by) <= y2
+
+
 def apply_simplification(result: dict) -> dict:
     raw = result.get("raw_lines") or result.get("lines") or []
-    lines = simplify_segments(raw)
+    region = detect_primary_drawing_region(result)
+    region_raw = [item for item in raw if _segment_intersects_region(item, region)] if region else list(raw)
+    lines = simplify_segments(region_raw)
+    result["drawing_region"] = region
+    result["raw_lines_for_drawing"] = region_raw
     result["lines"] = lines
     result["point_marks"] = result.get("point_marks", [])
     result["marking_complete"] = False
@@ -281,9 +343,11 @@ def apply_simplification(result: dict) -> dict:
     ]
     result["simplification"] = {
         "raw_segment_count": len(raw),
+        "region_candidate_segment_count": len(region_raw),
+        "region_filter_applied": region is not None,
         "merged_segment_count": len({source for line in lines for source in line.get("source_ids", [])}),
         "simplified_segment_count": len(lines),
         "intersection_count": len(result["intersections"]),
-        "rule": "严格共线合并、短间断合并、交点拆分、近正交约束、拓扑节点重建",
+        "rule": "主轮廓区域筛选、严格共线合并、短间断合并、交点拆分、近正交约束、拓扑节点重建",
     }
     return result

@@ -29,3 +29,28 @@ def test_apply_simplification_keeps_raw_candidates():
     assert len(result["raw_lines"]) == 2
     assert len(result["lines"]) == 1
     assert result["marking_complete"] is False
+
+
+def test_apply_simplification_filters_stray_lines_outside_primary_region():
+    result = {
+        "image_width": 500,
+        "image_height": 500,
+        "raw_lines": [
+            {"id": "inside_h", "start": [110, 150], "end": [290, 150]},
+            {"id": "inside_v", "start": [100, 110], "end": [100, 290]},
+            {"id": "outside_note", "start": [10, 10], "end": [35, 35]},
+        ],
+        "contours": [
+            {
+                "bbox": [100, 100, 200, 200],
+                "area_px2": 36000,
+                "vertex_count": 4,
+                "category": "building_outline_candidate",
+            }
+        ],
+    }
+    apply_simplification(result)
+    assert result["drawing_region"]["source"] == "largest_closed_contour"
+    assert result["simplification"]["region_filter_applied"] is True
+    assert {item["id"] for item in result["raw_lines_for_drawing"]} == {"inside_h", "inside_v"}
+    assert all("outside_note" not in item.get("source_ids", []) for item in result["lines"])

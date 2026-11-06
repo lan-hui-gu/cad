@@ -16,7 +16,7 @@ def sample_result():
         "raw_lines": [
             {"id": "L1", "start": [10, 180], "end": [210, 180], "length_px": 200},
             {"id": "L2", "start": [20, 20], "end": [20, 120], "length_px": 100},
-            {"id": "L3", "start": [230, 20], "end": [270, 60], "length_px": 56.6},
+            {"id": "L3", "start": [230, 60], "end": [290, 60], "length_px": 60},
         ],
         "lines": [
             {"id": "S1", "start": [10, 180], "end": [210, 180]},

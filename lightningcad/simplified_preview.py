@@ -78,7 +78,7 @@ def render_simplified_preview(result: dict) -> np.ndarray:
         box = item.get("bbox")
         if isinstance(box, (list, tuple)) and len(box) == 4:
             x, y, box_width, box_height = map(float, box)
-            font_size = max(12, min(34, int(max(box_height, 12) * 1.15)))
+            font_size = max(10, min(34, int(max(box_height, 10) * 0.9)))
             position = (int(x), int(y))
         else:
             x, baseline_y = item["position"]

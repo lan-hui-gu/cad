@@ -10,9 +10,11 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .categories import CURVE_CATEGORIES, LINE_CATEGORIES, POINT_CATEGORIES
+from .automatic_drawing import build_automatic_drawing_model
 from .drawing_model import build_drawing_model
 from .opencad import export_with_opencad, find_opencad_executable
 from .recognition import analyze_image
+from .simplified_preview import render_simplified_preview
 from .simplify import apply_simplification
 
 
@@ -31,7 +33,7 @@ LINE_COLORS = {
 class LightningCADApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LightningCAD-AI · 识别 → 拓扑简化 → 标记 → OpenCADStudio 原生绘图")
+        self.title("LightningCAD-AI · 手绘识别 → 简化图 → 自动 CAD 绘图")
         self.geometry("1560x960")
         self.minsize(1120, 720)
         self.source_path: Path | None = None
@@ -62,10 +64,10 @@ class LightningCADApp(tk.Tk):
         toolbar = ttk.Frame(self, padding=8)
         toolbar.pack(fill="x")
         ttk.Button(toolbar, text="导入草图", command=self.open_image).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="1.识别原始线条", command=self.recognize).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="2.简化线条", command=self.simplify).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="3.完成标记", command=self.finish_marking).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="4.OpenCADStudio 原生绘图", command=self.save_to_opencad).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="1.识别原始图元", command=self.recognize).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="2.生成简化图", command=self.simplify).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="3.根据简化图自动生成 CAD", command=self.save_to_opencad).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="可选：人工标记确认", command=self.finish_marking).pack(side="left", padx=3)
         ttk.Button(toolbar, text="导出项目 JSON", command=self.save_json).pack(side="left", padx=3)
         ttk.Button(toolbar, text="保存当前预览", command=self.save_overlay).pack(side="left", padx=3)
 
@@ -76,7 +78,7 @@ class LightningCADApp(tk.Tk):
         ttk.Combobox(settings, textvariable=self.rotation, values=("0", "90", "180", "270"), width=6, state="readonly").pack(side="left", padx=(4, 16))
         self.ocr_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(settings, text="本地 RapidOCR 文字识别", variable=self.ocr_enabled).pack(side="left", padx=4)
-        ttk.Label(settings, text="比例标定（原始照片 mm/px，未知可留空）").pack(side="left", padx=(18, 4))
+        ttk.Label(settings, text="比例标定（mm/px，可留空并尝试从尺寸文字估算）").pack(side="left", padx=(18, 4))
         self.scale_value = tk.StringVar(value="")
         ttk.Entry(settings, textvariable=self.scale_value, width=12).pack(side="left")
         ttk.Label(settings, text="未标定时按像素单位绘图").pack(side="left", padx=8)
@@ -92,13 +94,13 @@ class LightningCADApp(tk.Tk):
         main.add(left, weight=4)
         main.add(right, weight=2)
 
-        ttk.Label(left, text="图纸工作区：简化后点击线段选择；曲线可在列表中选择；启用点位模式后点击图纸放置符号。").pack(anchor="w")
+        ttk.Label(left, text="图纸工作区：第二步生成白底简化图；第三步直接按该图的几何结果自动生成 CAD，无需逐条画线。").pack(anchor="w")
         self.canvas = tk.Canvas(left, background="#e9edf1", highlightthickness=0, cursor="crosshair")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _event: self._render())
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
-        controls = ttk.LabelFrame(right, text="人工标记工具", padding=8)
+        controls = ttk.LabelFrame(right, text="可选人工修正工具（默认无需逐条操作）", padding=8)
         controls.pack(fill="x", pady=(0, 7))
 
         ttk.Label(controls, text="直线类别").grid(row=0, column=0, sticky="w")
@@ -135,7 +137,7 @@ class LightningCADApp(tk.Tk):
         self.point_tree.bind("<Double-1>", self.edit_point_label)
         self.text_tree.bind("<Double-1>", self.edit_ocr_text)
 
-        self.status = tk.StringVar(value="请导入俯视拍摄的防雷检测手绘草图。工作流程：识别 → 拓扑简化 → 标记 → OpenCADStudio 原生绘图。")
+        self.status = tk.StringVar(value="请导入防雷检测手绘草图。工作流程：识别 → 生成白底简化图 → 根据简化图自动绘制 CAD。")
         ttk.Label(self, textvariable=self.status, relief="sunken", anchor="w", padding=6).pack(fill="x")
 
     def _tree(self, title, columns, headings):
@@ -162,7 +164,7 @@ class LightningCADApp(tk.Tk):
         self.stage = "loaded"
         self.selected_line_id = self.selected_curve_id = self.selected_point_id = None
         self.point_mode = False
-        self.status.set(f"已导入：{self.source_path.name}。下一步请点击“1.识别原始线条”。")
+        self.status.set(f"已导入：{self.source_path.name}。下一步点击“1.识别原始图元”。")
         self._render_original()
 
     def _render_original(self):
@@ -230,8 +232,8 @@ class LightningCADApp(tk.Tk):
             self._render()
             stats = self.result["simplification"]
             self.status.set(
-                f"简化完成：原始 {stats['raw_segment_count']} 段 → 合并简化后 {stats['simplified_segment_count']} 段。"
-                "请逐条选择直线/弧线并标记类别。"
+                f"简化图生成完成：原始 {stats['raw_segment_count']} 段 → 简化后 {stats['simplified_segment_count']} 段。"
+                "现在可以直接点击“3.根据简化图自动生成 CAD”，无需逐条标记线段。"
             )
         except Exception as exc:
             messagebox.showerror("线条简化失败", f"{type(exc).__name__}: {exc}")
@@ -513,6 +515,9 @@ class LightningCADApp(tk.Tk):
     def _compose_overlay(self):
         if self.prepared is None:
             return
+        if self.stage == "simplified" and self.result is not None:
+            self.overlay = render_simplified_preview(self.result)
+            return
         image = self.prepared["image"].copy()
 
         if self.stage == "recognized":
@@ -611,12 +616,10 @@ class LightningCADApp(tk.Tk):
             self.opencad_exe.set(filename)
 
     def save_to_opencad(self):
-        if not self.result:
-            messagebox.showinfo("提示", "请先完成识别、简化和标记。")
+        if not self.result or self.stage not in ("simplified", "marked"):
+            messagebox.showinfo("提示", "请先完成原始图元识别和第二步简化，生成白底简化图后再自动绘图。")
             return
-        if not self.result.get("marking_complete"):
-            messagebox.showwarning("尚未完成标记", "必须先点击“3.完成标记”，软件才会按已确认图元生成工程图。")
-            return
+        manual_mode = bool(self.result.get("marking_complete"))
         executable = find_opencad_executable(self.opencad_exe.get().strip() or None)
         if not executable:
             messagebox.showerror(
@@ -626,9 +629,9 @@ class LightningCADApp(tk.Tk):
             return
         self.opencad_exe.set(executable)
         filename = filedialog.asksaveasfilename(
-            title="由 OpenCADStudio 原生生成防雷检测工程图",
+            title="根据简化图由 OpenCADStudio 自动生成防雷 CAD",
             defaultextension=".dwg",
-            initialfile=f"{self.source_path.stem if self.source_path else 'LightningCAD'}_CAD.dwg",
+            initialfile=f"{self.source_path.stem if self.source_path else 'LightningCAD'}_简化图_CAD.dwg",
             filetypes=[("OpenCADStudio DWG", "*.dwg"), ("DXF 文件", "*.dxf")],
         )
         if not filename:
@@ -637,21 +640,31 @@ class LightningCADApp(tk.Tk):
         if overwrite and not messagebox.askyesno("确认覆盖", f"文件已存在，是否覆盖？\n{filename}"):
             return
         try:
-            drawing_model = build_drawing_model(self.result)
-            self.status.set("正在启动 OpenCADStudio v2026.44 原生绘图引擎……")
+            drawing_model = build_drawing_model(self.result) if manual_mode else build_automatic_drawing_model(self.result)
+            scale = self._scale()
+            calibration_message = ""
+            if not manual_mode and scale is None:
+                calibration = drawing_model.get("calibration", {})
+                scale = calibration.get("mm_per_px")
+                calibration_message = calibration.get("message", "")
+            self.status.set("正在将简化图中的几何对象交给 OpenCADStudio v2026.44 原生绘图……")
             self.update_idletasks()
             outcome = export_with_opencad(
-                drawing_model, filename, executable, self._scale(),
+                drawing_model, filename, executable, scale,
                 overwrite=overwrite, open_after=self.open_after_export.get(),
             )
+            mode_label = "人工标记模型" if manual_mode else "自动简化几何模型"
+            scale_label = f"自动估算比例：{scale:.6g} mm/px" if scale else "未标定：使用图像像素单位"
             messagebox.showinfo(
                 "OpenCADStudio 绘图完成",
+                f"绘图依据：{mode_label}\n"
                 f"已通过 OpenCADStudio {outcome['version']} 原生创建并校验文件：\n"
                 f"{outcome['path']}\n\nCAD 实体：{outcome['created']} 个\n"
                 f"格式：{outcome['format']} {outcome['target_version']}\n"
+                f"{scale_label}\n{calibration_message}\n"
                 f"保存校验：通过\n已自动打开：{'是' if outcome['opened'] else '否'}",
             )
-            self.status.set(f"OpenCADStudio 原生绘图完成：{outcome['path']}")
+            self.status.set(f"OpenCADStudio 自动绘图完成：{outcome['path']}")
         except Exception as exc:
             self.status.set("OpenCADStudio 绘图失败")
             messagebox.showerror("OpenCADStudio 绘图失败", f"{type(exc).__name__}: {exc}")

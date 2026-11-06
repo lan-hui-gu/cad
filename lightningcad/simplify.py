@@ -296,8 +296,10 @@ def detect_primary_drawing_region(result: dict) -> dict | None:
 
     area, box, fraction = max(candidates, key=lambda item: item[0])
     x, y, box_width, box_height = box
-    margin_x = max(32.0, box_width * 0.20)
-    margin_y = max(32.0, box_height * 0.16)
+    aspect = box_width / max(box_height, 1.0)
+    horizontal_margin_ratio = 0.20 if aspect < 0.75 else 0.14
+    margin_x = max(50.0, box_width * horizontal_margin_ratio)
+    margin_y = max(45.0, box_height * 0.18)
     expanded = [
         max(0.0, x - margin_x),
         max(0.0, y - margin_y),

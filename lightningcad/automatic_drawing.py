@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import math
+import re
 from statistics import median
 
 from .ocr import parse_dimension_text
+
+
+PURE_DIMENSION_LABEL = re.compile(r"^\s*[0-9]+(?:[.,][0-9]+)?\s*(?:mm|cm|m|米)\s*$", re.IGNORECASE)
 
 
 def _valid_point(point) -> bool:
@@ -61,8 +65,12 @@ def infer_mm_per_px(result: dict) -> dict:
 
     region = result.get("drawing_region")
     for item in result.get("dimensions", []):
-        parsed = item.get("dimension") or parse_dimension_text(item.get("text", ""))
+        text_value = str(item.get("text", "")).strip()
+        parsed = item.get("dimension") or parse_dimension_text(text_value)
         if not parsed or parsed.get("value_mm") is None:
+            continue
+        # Material notes such as "7 mm steel plate" are not plan dimensions.
+        if not PURE_DIMENSION_LABEL.fullmatch(text_value):
             continue
         line = raw_by_id.get(item.get("nearest_line_id"))
         if not line:
@@ -81,7 +89,19 @@ def infer_mm_per_px(result: dict) -> dict:
             value_mm = float(parsed["value_mm"])
         except (KeyError, TypeError, ValueError):
             continue
-        if length_work_px < 20 or value_mm <= 0:
+        minimum_dimension_line_px = max(
+            24.0,
+            min(float(result.get("image_width", 0) or 0), float(result.get("image_height", 0) or 0)) * 0.12,
+        )
+        if length_work_px < minimum_dimension_line_px or value_mm <= 0:
+            continue
+        angle = math.degrees(math.atan2(
+            float(line["end"][1]) - float(line["start"][1]),
+            float(line["end"][0]) - float(line["start"][0]),
+        )) % 180.0
+        horizontal_deviation = min(angle, 180.0 - angle)
+        vertical_deviation = abs(angle - 90.0)
+        if min(horizontal_deviation, vertical_deviation) > 20.0:
             continue
         length_original_px = length_work_px / resize_scale
         mm_per_px = value_mm / length_original_px

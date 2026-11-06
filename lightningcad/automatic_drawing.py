@@ -167,8 +167,8 @@ def _collect_triangles(result: dict) -> list[dict]:
 
 def build_automatic_drawing_model(result: dict) -> dict:
     """Build CAD-ready geometry directly from simplified recognition output."""
-    if not result or not result.get("lines"):
-        raise ValueError("尚无简化线段。请先执行“简化线条”，再自动生成 CAD。")
+    if not result:
+        raise ValueError("没有可用的简化结果。请先执行“简化线条”，再自动生成 CAD。")
 
     lines = []
     for index, segment in enumerate(result.get("lines", []), start=1):

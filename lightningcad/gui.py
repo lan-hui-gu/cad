@@ -124,7 +124,7 @@ class LightningCADApp(tk.Tk):
         ttk.Button(controls, text="删除选中点位", command=self.delete_selected_point).grid(row=3, column=3, padx=3)
         controls.columnconfigure(1, weight=1)
 
-        ttk.Label(right, text="简化结果与人工确认").pack(anchor="w")
+        ttk.Label(right, text="简化图元信息（自动绘图直接使用）").pack(anchor="w")
         self.tabs = ttk.Notebook(right)
         self.tabs.pack(fill="both", expand=True)
         self.line_tree = self._tree("简化直线", ("id", "category", "length", "merged", "status"), ("编号", "类别", "长度(px)", "合并段", "状态"))

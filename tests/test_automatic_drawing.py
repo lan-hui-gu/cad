@@ -3,6 +3,7 @@ import pytest
 
 from lightningcad.automatic_drawing import build_automatic_drawing_model
 from lightningcad.simplified_preview import render_simplified_preview
+from lightningcad.opencad import drawing_model_to_opencad_entities
 
 
 def sample_result():
@@ -48,7 +49,7 @@ def test_automatic_model_uses_all_simplified_lines_without_marking():
 
 
 def test_automatic_model_requires_simplified_geometry():
-    with pytest.raises(ValueError, match="简化线段"):
+    with pytest.raises(ValueError, match="没有可绘制的几何对象"):
         build_automatic_drawing_model({"image_width": 10, "image_height": 10, "lines": []})
 
 
@@ -57,3 +58,12 @@ def test_simplified_preview_is_clean_white_canvas_and_contains_geometry():
     assert preview.shape == (200, 300, 3)
     assert np.all(preview[0, 0] == 255)
     assert np.any(preview[180, 100] < 255)
+
+
+def test_automatic_model_converts_directly_to_native_opencad_entities():
+    model = build_automatic_drawing_model(sample_result())
+    entities = drawing_model_to_opencad_entities(model, mm_per_px=model["calibration"]["mm_per_px"])
+    types = {item["type"] for item in entities}
+    layers = {item["layer"] for item in entities}
+    assert {"Line", "LwPolyline", "Solid", "Circle", "Text"} <= types
+    assert {"SIMPLIFIED_GEOMETRY", "SIMPLIFIED_SYMBOL", "SIMPLIFIED_TEXT", "ARC"} <= layers

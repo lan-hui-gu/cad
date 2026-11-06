@@ -219,6 +219,7 @@ def build_automatic_drawing_model(result: dict) -> dict:
         texts.append({
             "text": value,
             "position": [x, y + height],
+            "bbox": [x, y, width, height],
             "category": "auto_text",
             "confidence": item.get("confidence"),
             "source_category": item.get("category", "annotation_text_candidate"),

@@ -16,6 +16,7 @@ def sample_result():
         "raw_lines": [
             {"id": "L1", "start": [10, 180], "end": [210, 180], "length_px": 200},
             {"id": "L2", "start": [20, 20], "end": [20, 120], "length_px": 100},
+            {"id": "L3", "start": [230, 20], "end": [270, 60], "length_px": 56.6},
         ],
         "lines": [
             {"id": "S1", "start": [10, 180], "end": [210, 180]},
@@ -40,7 +41,8 @@ def sample_result():
             {"text": "页眉杂字", "bbox": [270, 160, 25, 12], "category": "annotation_text_candidate", "confidence": 0.8}
         ],
         "dimensions": [
-            {"text": "9.4m", "dimension": {"value_mm": 9400}, "nearest_line_id": "L1", "nearest_line_distance_px": 12}
+            {"text": "9.4m", "dimension": {"value_mm": 9400}, "nearest_line_id": "L1", "nearest_line_distance_px": 12},
+            {"text": "7mm钢板", "dimension": {"value_mm": 7}, "nearest_line_id": "L3", "nearest_line_distance_px": 10}
         ],
     }
 
